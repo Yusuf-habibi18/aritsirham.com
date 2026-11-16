@@ -1,0 +1,116 @@
+const rupiah = new Intl.NumberFormat("id-ID");
+const formatRp = (n) => "Rp " + rupiah.format(Math.round(n));
+const toNumber = (v) => Number(String(v).replace(/\D/g, "")) || 0;
+
+function formatMoneyInput(input) {
+  const caret = input.selectionStart;
+  const digitsBefore = input.value.slice(0, caret).replace(/\D/g, "").length;
+  const digits = input.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
+  input.value = digits ? rupiah.format(Number(digits)) : "";
+
+  let pos = 0;
+  for (let seen = 0; pos < input.value.length && seen < digitsBefore; pos++) {
+    if (/\d/.test(input.value[pos])) seen++;
+  }
+  input.setSelectionRange(pos, pos);
+}
+
+function readCalcForm(form) {
+  const data = {};
+  form.querySelectorAll("input, select").forEach((field) => {
+    data[field.name] = field.matches("[data-money]") ? toNumber(field.value) : Number(field.value);
+  });
+  return data;
+}
+
+const periodeValid = (n) => Number.isInteger(n) && n >= 1 && n <= 40;
+
+function hitungGap(d) {
+  const gap = (butuh, punya) => ({ butuh, punya, gap: Math.max(0, butuh - punya) });
+  return {
+    jiwa: d.pengeluaran > 0 && periodeValid(d.periode)
+      ? gap(d.pengeluaran * 12 * d.periode + d.utang + d.pendidikan + d.darurat, d.upJiwa + d.tabungan)
+      : null,
+    kritis: d.penghasilan > 0 ? gap(d.penghasilan * 12 * d.pemulihan, d.upKritis) : null,
+  };
+}
+
+function renderBlock(block, r) {
+  block.hidden = !r;
+  if (!r) return;
+  const persen = Math.min(100, Math.round((r.punya / r.butuh) * 100));
+  const covered = r.gap === 0;
+  block.classList.toggle("is-covered", covered);
+  block.querySelector("[data-out=gap]").textContent = formatRp(r.gap);
+  block.querySelector("[data-out=butuh]").textContent = formatRp(r.butuh);
+  block.querySelector("[data-out=punya]").textContent = formatRp(r.punya);
+  block.querySelector("[data-out=meter]").style.width = persen + "%";
+  block.querySelector("[data-out=caption]").textContent = covered
+    ? tr("Perlindungan yang sudah Anda miliki sudah memenuhi perkiraan kebutuhan ini.", "Your existing coverage already meets this estimated need.")
+    : tr("Perlindungan yang sudah Anda miliki baru memenuhi " + persen + "% dari perkiraan kebutuhan.", "Your existing coverage meets only " + persen + "% of the estimated need.");
+}
+
+function buildCalcMessage(hasil, pemulihan) {
+  const lines = [tr("Halo, saya sudah mencoba kalkulator kesenjangan proteksi di website Anda dan ingin mendiskusikan hasilnya.", "Hello, I tried the protection gap calculator on your website and would like to discuss the results.")];
+  const bagian = (judul, r) => lines.push(
+    "",
+    judul,
+    tr("- Perkiraan kebutuhan: ", "- Estimated needs: ") + formatRp(r.butuh),
+    tr("- Perlindungan yang sudah ada: ", "- Existing coverage: ") + formatRp(r.punya),
+    tr("- Kesenjangan: ", "- Gap: ") + formatRp(r.gap)
+  );
+  if (hasil.jiwa) bagian(tr("Asuransi jiwa", "Life insurance"), hasil.jiwa);
+  if (hasil.kritis) bagian(tr("Penyakit kritis (" + pemulihan + " tahun penghasilan)", "Critical illness (" + pemulihan + " years of income)"), hasil.kritis);
+  return lines.join("\n");
+}
+
+document.querySelectorAll("[data-calc]").forEach((form) => {
+  const result = document.getElementById("hasil");
+  const empty = result.querySelector("[data-calc-empty]");
+  const output = result.querySelector("[data-calc-output]");
+  const status = result.querySelector("[data-calc-status]");
+  const periode = form.querySelector("[name=periode]");
+  const periodeError = document.getElementById(periode.id + "-error");
+  let announceTimer;
+
+  const checkPeriode = () => {
+    const ok = periodeValid(Number(periode.value));
+    periode.setAttribute("aria-invalid", ok ? "false" : "true");
+    periodeError.textContent = ok ? "" : tr("Masukkan angka 1 sampai 40 tahun.", "Enter a number from 1 to 40 years.");
+    periodeError.hidden = ok;
+  };
+  periode.addEventListener("input", () => {
+    periode.value = periode.value.replace(/\D/g, "");
+    if (periode.getAttribute("aria-invalid") === "true") checkPeriode();
+  });
+  periode.addEventListener("blur", checkPeriode);
+
+  const update = () => {
+    const data = readCalcForm(form);
+    const hasil = hitungGap(data);
+
+    renderBlock(output.querySelector("[data-calc-block=jiwa]"), hasil.jiwa);
+    renderBlock(output.querySelector("[data-calc-block=kritis]"), hasil.kritis);
+    output.querySelector("[data-out=tahun]").textContent = data.pemulihan;
+
+    const ada = Boolean(hasil.jiwa || hasil.kritis);
+    empty.hidden = ada;
+    output.hidden = !ada;
+    if (ada) output.querySelector("[data-calc-wa]").href = buildWaUrl(buildCalcMessage(hasil, data.pemulihan));
+
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => {
+      const teks = [];
+      if (hasil.jiwa) teks.push(tr("Kesenjangan asuransi jiwa ", "Life insurance gap ") + formatRp(hasil.jiwa.gap) + ".");
+      if (hasil.kritis) teks.push(tr("Kesenjangan penyakit kritis ", "Critical illness gap ") + formatRp(hasil.kritis.gap) + ".");
+      status.textContent = teks.join(" ");
+    }, 1000);
+  };
+
+  form.querySelectorAll("[data-money]").forEach((input) => {
+    input.addEventListener("input", () => formatMoneyInput(input));
+  });
+  form.addEventListener("input", update);
+  form.addEventListener("submit", (e) => e.preventDefault());
+  update();
+});

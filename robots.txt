@@ -1,0 +1,5 @@
+# Semua halaman boleh dibaca mesin pencari. 404.html sudah ditandai noindex di halamannya sendiri.
+User-agent: *
+Allow: /
+
+Sitemap: https://aritsirham.com/sitemap.xml
